@@ -7,7 +7,7 @@
 #define TX 11
 
 String WIFI_SSID = "XXXXX";       // Your WiFi ssid
-String PASSWORD = "XXXXX";         // Password
+String PASSWORD =  "XXXXX";         // Password
 
 // Thingspeak details
 String HOST = "api.thingspeak.com";
@@ -34,17 +34,25 @@ String dataValues      = "";
 String request         = "";
 
 unsigned long previous_millis = 0;
+unsigned long compteur_temp    = 0;
 
 // Init Software serial
 SoftwareSerial esp8266(RX, TX);
+
 
 //-----------------------INITIALISATION DU PROGRAMME-------------------------------------------------
 
 void setup()
 {
   // ### Etalonnage - Debug ###
-  // Serial.begin(9600);
-  // Serial.println(esp8266.read());
+  //  Serial.begin(9600);
+  //  Serial.println(esp8266.read());
+
+  lcd.init();
+  lcd.backlight();
+
+  emon.voltage(0, 363, 1.7);
+  emon.current(2, 28.6);
 
   // Init ESP8266 serial connection
   esp8266.begin(115200);
@@ -52,16 +60,17 @@ void setup()
 
   // Connexion to WiFI Network
   sendCommandToESP8266("AT", 5, "OK");
+  lcd.setCursor(0,0);
+  lcd.print("Initializing ESP01");
   sendCommandToESP8266("AT+CWMODE=1", 5, "OK");
+  lcd.setCursor(0,1);
+  lcd.print("Connecting to Wifi");
+  lcd.setCursor(0,2);
+  lcd.print(WIFI_SSID);
   sendCommandToESP8266("AT+CWJAP=\"" + WIFI_SSID + "\",\"" + PASSWORD + "\"", 20, "OK");
 
-  emon.voltage(0, 208, 1.7);
-  emon.current(2, 27);
-
-  lcd.init();
-  lcd.backlight();
-
   //1ere ligne
+  lcd.clear();
   lcd.setCursor(0, 0);
   lcd.print("Conso:");
   lcd.setCursor(11, 0);
@@ -85,24 +94,6 @@ void setup()
   lcd.print("Cumul rejet:");
   lcd.setCursor(17, 3);
   lcd.print("kWh");
-
-  // Init LED Rouge
-  pinMode(4, OUTPUT);
-  // Init LED Jaune
-  pinMode(7, OUTPUT);
-  // Init LED Verte
-  pinMode(10, OUTPUT);
-  // On allume toutes les leds
-  digitalWrite(4, HIGH);
-  delay(500);
-  digitalWrite(7, HIGH);
-  delay(500);
-  digitalWrite(10, HIGH);
-  delay(500);
-  // Puis on les éteins
-  digitalWrite(4, LOW);
-  digitalWrite(7, LOW);
-  digitalWrite(10, LOW);
 }
 //----------------------- DEMARRAGE DE LA BOUCLE----------------------------------------------------
 
@@ -113,8 +104,8 @@ void loop()
   cosinus_phi = emon.powerFactor;
 
   // ### Etalonnage ###
-  // float verif_voltage    = emon.Vrms;
-  // float verif_ampere     = emon.Irms;
+  //  float verif_voltage    = emon.Vrms;
+  //  float verif_ampere     = emon.Irms;
 
   //--------------------------Etalonnage des volts et ampères sans LCD--------------------------------------
 
@@ -123,8 +114,7 @@ void loop()
   //  Serial.print(verif_voltage);
   //  Serial.print(" V  ");
   //  Serial.print(verif_ampere);
-  //  Serial.print(" A ");
-  //  Serial.print("\n");
+  //  Serial.println(" A ");
 
   //----------------POUR AVOIR LES W, Wh et kWh de l'élélectricité qui rentre et de l'électricité qui sort de ma maison------------------
 
@@ -133,10 +123,6 @@ void loop()
     w_instantane_in  = puissance_reelle;
     w_instantane_out = 0.0;
 
-    digitalWrite(4, LOW);
-    digitalWrite(7, LOW);
-    digitalWrite(10, LOW);
-
     kwh_cumule_in += puissance_reelle * (millis() - previous_millis) / 3600000000;
   }
   else
@@ -144,36 +130,8 @@ void loop()
     w_instantane_in = 0.0;
     w_instantane_out = abs(puissance_reelle);
 
-    if (w_instantane_out < 100) {
-      digitalWrite(4, LOW);
-      digitalWrite(7, LOW);
-      digitalWrite(10, HIGH);
-    } else if (w_instantane_out < 300) {
-      digitalWrite(4, LOW);
-      digitalWrite(7, HIGH);
-      digitalWrite(10, LOW);
-    } else {
-      digitalWrite(4, HIGH);
-      digitalWrite(7, LOW);
-      digitalWrite(10, LOW);
-    }
-
-    kwh_cumule_out += abs(puissance_reelle) * (millis() - previous_millis) / 3600000000;
+    kwh_cumule_out += w_instantane_out * (millis() - previous_millis) / 3600000000;
   }
-
-  previous_millis = millis();
-
-  // Send data to server
-  dataValues = "field1=" + String(w_instantane_in) + "&field2=" + String(w_instantane_out)
-               + "&field3=" + String(cosinus_phi) + "&field4=" + String(kwh_cumule_in)
-               + "&field5=" + String(kwh_cumule_out);
-  request = "GET " + PATH + writeAPIKey + "&" + dataValues + "\r\n";
-  sendCommandToESP8266("AT+CIPMUX=0", 5, "OK");
-  sendCommandToESP8266("AT+CIPSTART=\"TCP\",\"" + HOST + "\"," + PORT, 15, "OK");
-  sendCommandToESP8266("AT+CIPSEND=" + String(request.length()), 4, ">");
-  sendData(request);
-  sendCommandToESP8266("AT+CIPCLOSE", 5, "OK");
-  delay(3000);
 
   // Update LCD Display
   //1ere ligne
@@ -223,14 +181,33 @@ void loop()
   lcd.print("     ");
   lcd.setCursor(15 - abs(offset_out), 3);
   lcd.print(floor(kwh_cumule_out), 0);
+
+  compteur_temp += millis() - previous_millis;
+
+  // Send data to server
+  if (compteur_temp >= 30000)
+  {
+    dataValues = "field1=" + String(w_instantane_in) + "&field2=" + String(w_instantane_out)
+                 + "&field3=" + String(cosinus_phi) + "&field4=" + String(kwh_cumule_in)
+                 + "&field5=" + String(kwh_cumule_out);
+    request = "GET " + PATH + writeAPIKey + "&" + dataValues + "\r\n";
+    sendCommandToESP8266("AT+CIPMUX=0", 2, "OK");
+    sendCommandToESP8266("AT+CIPSTART=\"TCP\",\"" + HOST + "\"," + PORT, 2, "OK");
+    sendCommandToESP8266("AT+CIPSEND=" + String(request.length()), 2, ">");
+    sendData(request);
+    sendCommandToESP8266("AT+CIPCLOSE", 2, "OK");
+    compteur_temp = 0;
+  }
+
+  previous_millis = millis();
 }
 
 void sendCommandToESP8266(String command, int maxTime, char readReplay[]) {
   // Debug
-  Serial.print(countTrueCommand);
-  Serial.print(". at command => ");
-  Serial.print(command);
-  Serial.print(" ");
+  //  Serial.print(countTrueCommand);
+  //  Serial.print(". at command => ");
+  //  Serial.print(command);
+  //  Serial.print(" ");
 
   while (countTimeCommand < maxTime)
   {
@@ -247,13 +224,13 @@ void sendCommandToESP8266(String command, int maxTime, char readReplay[]) {
   if (found == true)
   {
     //Debug
-    Serial.println("Success");
+    //Serial.println("Success");
 
     countTrueCommand++;
   }
   else {
     //Debug
-    Serial.println("Fail");
+    //Serial.println("Fail");
 
     countTrueCommand = 0;
   }
@@ -264,9 +241,8 @@ void sendCommandToESP8266(String command, int maxTime, char readReplay[]) {
 
 void sendData(String postRequest) {
   //Debug
-  Serial.println(postRequest);
+  //Serial.println(postRequest);
 
   esp8266.println(postRequest);
   countTrueCommand++;
-  delay(2000);
 }
